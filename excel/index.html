@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="referrer" content="no-referrer">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>智匯文件管理 · Microsoft 365</title>
+  <!-- Tailwind CSS -->
+  <link rel="stylesheet" href="vendor/app.css">
+  <!-- Chart.js -->
+  <script src="vendor/chart.umd.min.js"></script>
+  <!-- Font Awesome Icons -->
+  <link rel="stylesheet" href="vendor/icons.css">
+  <style>
+    /* 客製化滾動條 */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #f1f5f9;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #cbd5e1;
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #94a3b8;
+    }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen flex flex-col font-sans">
+
+  <!-- 全螢幕加載遮罩 -->
+  <div id="loadingOverlay" class="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-50 flex flex-col items-center justify-center hidden">
+    <div class="relative flex items-center justify-center">
+      <div class="animate-spin rounded-full h-16 w-16 border-4 border-slate-200 border-t-blue-600"></div>
+    </div>
+    <p id="loadingText" class="mt-4 text-white text-lg font-semibold tracking-wider">系統處理中，請稍候...</p>
+  </div>
+
+  <!-- Toast 訊息提示元件 -->
+  <div id="toastContainer" class="fixed top-5 right-5 z-50 flex flex-col gap-2"></div>
+
+  <!-- 登入頁面 -->
+  <div id="loginScreen" class="fixed inset-0 bg-slate-950 flex items-center justify-center px-4 z-40 transition-all duration-300">
+    <div class="absolute inset-0 opacity-10 bg-[radial-gradient(#38bdf8_1px,transparent_1px)] [background-size:16px_16px]"></div>
+    <div class="bg-white/95 backdrop-blur-md rounded-2xl shadow-2xl p-8 max-w-md w-full relative z-10 border border-slate-100">
+      <div class="text-center mb-8">
+        <div class="inline-flex p-3 bg-blue-100 text-blue-600 rounded-2xl mb-3">
+          <i class="fa-solid fa-folder-tree text-3xl"></i>
+        </div>
+        <h1 class="text-2xl font-bold text-slate-900">智匯文件分類管理</h1>
+        <p class="text-slate-500 mt-1">Excel 版：限定權限相容性測試</p>
+      </div>
+
+      <form id="loginForm" onsubmit="handleLogin(event)">
+        <button id="m365LoginButton" type="submit" class="w-full py-3 bg-blue-600 text-white rounded-lg font-semibold disabled:opacity-50 disabled:cursor-not-allowed">使用公司 Microsoft 365 帳號登入</button>
+      </form>
+      <p id="configStatus" role="status" class="mt-4 p-3 rounded-lg bg-slate-100 text-sm text-slate-600 leading-relaxed">正在檢查連線設定...</p>
+      <div class="mt-6 text-center text-xs text-slate-400 border-t border-slate-100 pt-4">
+        密碼只在 Microsoft 登入頁面輸入。此版本不提供模擬帳號；連線失敗時不會改存本機。<br><a href="../index.html" class="text-blue-600 underline">查看設定與操作說明</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- 系統主頁面（登入後顯示） -->
+  <div id="mainApp" class="flex-1 flex flex-col hidden">
+    <div class="bg-blue-50 text-blue-900 px-4 py-3 text-sm text-center"><strong>Excel 版：限定權限相容性測試</strong> · 資料來源：<a id="workbookLink" target="_blank" rel="noopener noreferrer" class="underline"></a> · 依 SharePoint 權限共同編輯
+      <p class="text-xs mt-1">第一版請輪流操作；編輯期間避免在 Excel 排序或刪除資料列。附件沿用公司存取權限。</p></div>
+    <p id="operationStatus" role="status" aria-live="polite" class="hidden px-4 py-3 bg-amber-50 text-amber-900 text-sm"></p>
+    <!-- 頂部導覽列 -->
+    <header class="bg-slate-900 text-white shadow-md sticky top-0 z-30">
+      <div class="max-w-7xl mx-auto px-4 py-4 flex flex-col sm:flex-row justify-between items-center gap-4">
+        <div class="flex items-center gap-3">
+          <div class="bg-blue-600 p-2 rounded-lg">
+            <i class="fa-solid fa-layer-group text-xl"></i>
+          </div>
+          <div>
+            <h1 class="text-xl font-bold tracking-wide">智匯文件分類查詢與上傳系統</h1>
+            <p class="text-xs text-slate-400">Enterprise Document Hub & Inventory System</p>
+          </div>
+        </div>
+        
+        <div class="flex items-center gap-4">
+          <div class="bg-slate-800/80 px-4 py-1.5 rounded-full border border-slate-700 flex items-center gap-2">
+            <i class="fa-solid fa-user-shield text-blue-400 text-xs"></i>
+            <span class="text-sm font-medium" id="userDisplayName">載入中...</span>
+            <span class="text-[10px] px-2 py-0.5 bg-blue-500/20 text-blue-300 rounded-full font-semibold" id="userRoleBadge">一般使用者</span>
+          </div>
+          <button onclick="handleLogout()" class="px-3.5 py-1.5 text-sm bg-red-600/10 hover:bg-red-600 text-red-400 hover:text-white rounded-lg border border-red-500/30 transition flex items-center gap-1">
+            <i class="fa-solid fa-sign-out-alt"></i> 登出
+          </button>
+        </div>
+      </div>
+
+      <!-- 分頁標籤導覽列 (新增 overflow-x-auto 機制確保分頁於行動端不破壞版面) -->
+      <div class="bg-slate-800 border-t border-slate-700/60">
+        <div class="max-w-7xl mx-auto px-4 flex overflow-x-auto whitespace-nowrap">
+          <button onclick="switchTab('searchTab')" id="btn-searchTab" class="py-4 px-6 text-sm font-semibold border-b-2 border-blue-500 text-blue-400 flex items-center gap-2 transition hover:text-white">
+            <i class="fa-solid fa-magnifying-glass"></i> 檔案搜尋與管理
+          </button>
+          <button onclick="switchTab('uploadTab')" id="btn-uploadTab" class="py-4 px-6 text-sm font-semibold border-b-2 border-transparent text-slate-400 flex items-center gap-2 transition hover:text-white">
+            <i class="fa-solid fa-cloud-arrow-up"></i> 全新檔案上傳
+          </button>
+          <button onclick="switchTab('statsTab')" id="btn-statsTab" class="py-4 px-6 text-sm font-semibold border-b-2 border-transparent text-slate-400 flex items-center gap-2 transition hover:text-white">
+            <i class="fa-solid fa-chart-pie"></i> 檔案分類統計
+          </button>
+          <!-- 個人設定分頁按鈕 (預設隱藏，登入後動態顯示) -->
+          <button onclick="switchTab('settingsTab')" id="btn-settingsTab" class="py-4 px-6 text-sm font-semibold border-b-2 border-transparent text-slate-400 flex items-center gap-2 transition hover:text-white hidden">
+            <i class="fa-solid fa-sliders"></i> 系統設定
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- 主要內容區 -->
+    <main class="flex-1 max-w-7xl w-full mx-auto px-4 py-6">
+
+      <!-- ======================================= -->
+      <!-- Tab 1: 檔案搜尋與管理 (進階篩選升級版) -->
+      <!-- ======================================= -->
+      <section id="searchTab" class="tab-content space-y-6">
+        <!-- 複合多條件進階搜尋面板 -->
+        <div class="bg-white p-5 rounded-xl shadow-sm border border-slate-100 space-y-4">
+          <!-- 第一排：關鍵字、重置與導出 -->
+          <div class="flex flex-col lg:flex-row gap-4 justify-between lg:items-center">
+            <div class="flex-1">
+              <label class="block text-xs font-bold text-slate-400 uppercase mb-1">關鍵字模糊搜尋</label>
+              <div class="relative">
+                <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400">
+                  <i class="fa-solid fa-magnifying-glass"></i>
+                </span>
+                <input type="text" id="searchInput" oninput="debouncedSearch()" class="w-full pl-10 pr-12 py-2.5 rounded-lg border border-slate-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none" placeholder="搜尋文件編號、文件名稱、實體收藏櫃位...">
+                <button onclick="clearSearch()" class="absolute inset-y-0 right-0 flex items-center pr-3 text-slate-400 hover:text-slate-600">
+                  <i class="fa-solid fa-times-circle"></i>
+                </button>
+              </div>
+            </div>
+            
+            <div class="flex items-end gap-2">
+              <button id="btnExport" onclick="handleExport()" class="h-[46px] px-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-semibold text-sm transition shadow-md shadow-emerald-600/10 flex items-center gap-2">
+                <i class="fa-solid fa-file-excel"></i> 導出盤點清單
+              </button>
+              <button onclick="clearSearch()" class="h-[46px] px-4 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg font-semibold text-sm transition flex items-center gap-2" title="清除所有條件">
+                <i class="fa-solid fa-filter-circle-xmark"></i> 清除篩選
+              </button>
+              <button onclick="fetchDocuments()" class="h-[46px] w-[46px] flex items-center justify-center bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg transition" title="重新整理">
+                <i class="fa-solid fa-rotate"></i>
+              </button>
+            </div>
+          </div>
+
+          <!-- 第二排：進階篩選（分類下拉與合約檔案日期範圍） -->
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-3 border-t border-slate-100">
+            <div>
+              <label class="block text-xs font-bold text-slate-500 mb-1">合約文件分類</label>
+              <!-- 這裡由 JS 全動態填充 options -->
+              <select id="filterCategory" onchange="fetchDocuments()" class="w-full px-3 py-2 rounded-lg border border-slate-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none bg-white text-sm">
+                <option value="">全部分類</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs font-bold text-slate-500 mb-1">合約日期 (起)</label>
+              <input type="date" id="filterStartDate" onchange="fetchDocuments()" class="w-full px-3 py-2 rounded-lg border border-slate-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
+            </div>
+            <div>
+              <label class="block text-xs font-bold text-slate-500 mb-1">合約日期 (迄)</label>
+              <input type="date" id="filterEndDate" onchange="fetchDocuments()" class="w-full px-3 py-2 rounded-lg border border-slate-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
+            </div>
+          </div>
+        </div>
+
+        <!-- 搜尋結果總攬資訊 -->
+        <div class="flex justify-between items-center text-sm text-slate-500 px-1">
+          <p>共查出 <span id="searchCount" class="font-bold text-blue-600">0</span> 筆相符文件</p>
+          <p id="searchContextText" class="hidden">篩選條件: <span id="activeFilterBadge" class="px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full font-medium"></span></p>
+        </div>
+
+        <!-- 卡片網格 (Grid Card Layout) -->
+        <div id="documentGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <!-- 卡片範本將由 JS 動態生成 -->
+        </div>
+
+        <!-- 無資料提示 -->
+        <div id="noDataView" class="hidden py-20 text-center">
+          <div class="text-slate-300 text-6xl mb-4">
+            <i class="fa-solid fa-folder-open"></i>
+          </div>
+          <h3 class="text-lg font-bold text-slate-700">找不到相符的文件</h3>
+          <p class="text-slate-400 text-sm mt-1">請嘗試調整您的篩選條件、分類或日期範圍，或建立首筆資料。</p>
+        </div>
+      </section>
+
+      <!-- ======================================= -->
+      <!-- Tab 2: 全新檔案上傳 -->
+      <!-- ======================================= -->
+      <section id="uploadTab" class="tab-content space-y-6 hidden">
+        <!-- 內部子頁籤 (Sub-tabs) -->
+        <div class="border-b border-slate-200">
+          <div class="flex gap-4">
+            <button onclick="switchSubTab('singleUpload')" id="btn-singleUpload" class="py-2 px-4 text-sm font-semibold border-b-2 border-blue-500 text-blue-600 flex items-center gap-1.5 transition">
+              <i class="fa-solid fa-file-circle-plus"></i> 模式 A：單筆檔案上傳
+            </button>
+            <button onclick="switchSubTab('bulkUpload')" id="btn-bulkUpload" class="py-2 px-4 text-sm font-semibold border-b-2 border-transparent text-slate-500 hover:text-slate-800 flex items-center gap-1.5 transition">
+              <i class="fa-solid fa-folder-plus"></i> 模式 B：多檔案批次建檔
+            </button>
+          </div>
+        </div>
+
+        <!-- 模式 A：單筆上傳 (新增分類櫃位自動帶入機制) -->
+        <div id="singleUploadView" class="max-w-2xl bg-white p-8 rounded-xl shadow-sm border border-slate-100 space-y-6">
+          <h3 class="text-lg font-bold text-slate-800 flex items-center gap-2">
+            <span class="w-1 h-5 bg-blue-600 rounded-full"></span> 單筆文件基本資料
+          </h3>
+          <form id="singleUploadForm" onsubmit="handleSingleUpload(event)" class="space-y-5">
+            <div>
+              <label class="block text-sm font-semibold text-slate-700 mb-1">文件名稱 <span class="text-red-500">*</span></label>
+              <input type="text" id="singleDocName" required class="w-full px-4 py-2 rounded-lg border border-slate-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none" placeholder="例如：115年度硬體設備合約">
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label class="block text-sm font-semibold text-slate-700 mb-1">文件分類 <span class="text-red-500">*</span></label>
+                <!-- 透過 onchange 自動更新實體收藏位置，options 由 JS 全動態填充 -->
+                <select id="singleCategory" onchange="handleSingleCategoryChange(this.value)" required class="w-full px-4 py-2 rounded-lg border border-slate-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none bg-white">
+                </select>
+              </div>
+              <div>
+                <label class="block text-sm font-semibold text-slate-700 mb-1">檔案日期</label>
+                <input type="date" id="singleFileDate" class="w-full px-4 py-2 rounded-lg border border-slate-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none">
+              </div>
+            </div>
+
+            <div>
+              <label class="block text-sm font-semibold text-slate-700 mb-1">實體收藏位置 (庫房定位) <span class="text-red-500">*</span></label>
+              <input type="text" id="singleLocation" required class="w-full px-4 py-2 rounded-lg border border-slate-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none" placeholder="例如：A區鐵櫃-02、B區第三抽屜">
+            </div>
+
+            <div class="border-t border-slate-100 pt-4">
+              <label class="block text-sm font-semibold text-slate-700 mb-2">上傳雲端附件 (可支援 Word, PDF, 圖片)</label>
+              <div class="border-2 border-dashed border-slate-200 rounded-lg p-6 text-center hover:border-blue-500 transition relative">
+                <input type="file" id="singleFile" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" onchange="updateFileNameDisplay(this, 'singleFileNameText')">
+                <div class="space-y-1">
+                  <i class="fa-solid fa-cloud-arrow-up text-3xl text-slate-400"></i>
+                  <p class="text-sm text-slate-600 font-medium" id="singleFileNameText">點擊選取附件（單檔上限 10 MB）</p>
+                  <p class="text-xs text-slate-400">檔案上限約 20MB</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="flex gap-3 justify-end pt-4">
+              <button type="button" onclick="resetSingleForm()" class="px-5 py-2.5 border border-slate-200 rounded-lg text-slate-600 font-semibold text-sm hover:bg-slate-50 transition">
+                重設欄位
+              </button>
+              <button type="submit" class="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold text-sm transition shadow-md shadow-blue-500/15">
+                送出並建檔
+              </button>
+            </div>
+          </form>
+        </div>
+
+        <!-- 模式 B：多檔案批次建檔 -->
+        <div id="bulkUploadView" class="space-y-6 hidden">
+          <!-- 雙軌機制選擇區 -->
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            
+            <!-- 機制 1: CSV批次載入 -->
+            <div class="bg-white p-6 rounded-xl border border-slate-200/80 shadow-sm space-y-4">
+              <div class="flex items-center gap-3">
+                <div class="bg-emerald-100 text-emerald-600 p-2.5 rounded-lg">
+                  <i class="fa-solid fa-file-csv text-xl"></i>
+                </div>
+                <div>
+                  <h4 class="font-bold text-slate-800">1. CSV 批次匯入</h4>
+                  <p class="text-xs text-slate-400">Excel 請先另存為 CSV，每批最多 100 筆</p>
+                </div>
+              </div>
+              <div class="bg-slate-50 p-3.5 rounded-lg text-xs space-y-1.5 text-slate-600">
+                <p class="font-bold text-slate-700">📌 CSV 欄位規範 (請包含以下對應欄位)：</p>
+                <p><code>文件名稱, 分類, 收藏位置, 檔案日期</code> (首行必須為欄位名稱)</p>
+                <p class="text-red-500 font-semibold">* 匯入會新增文件編號，並以目前登入者及時間建檔；不覆蓋既有文件。</p>
+              </div>
+
+              <!-- 編碼格式與防呆選擇器 -->
+              <div class="grid grid-cols-2 gap-2 text-xs">
+                <div>
+                  <label class="block font-semibold text-slate-700 mb-1">CSV 編碼格式 (重要)</label>
+                  <select id="csvEncoding" class="w-full p-2 border border-slate-200 rounded bg-white font-medium text-slate-700 focus:ring-1 focus:ring-emerald-500 outline-none">
+                    <option value="UTF-8">UTF-8 編碼 (Mac/雲端導出)</option>
+                    <option value="Big5">Big5 / CP950 繁體中文 (Windows Excel 導出)</option>
+                  </select>
+                </div>
+                <div class="flex flex-col justify-end">
+                  <span class="text-[10px] text-slate-400 leading-tight">若匯入預覽發現中文呈現亂碼，請切換此設定重新載入檔案。</span>
+                </div>
+              </div>
+
+              <div class="relative border-2 border-dashed border-emerald-200 hover:border-emerald-500 rounded-lg p-6 text-center transition">
+                <input type="file" id="csvFileInput" accept=".csv" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" onchange="handleCSVSelect(this)">
+                <div class="space-y-1">
+                  <i class="fa-solid fa-file-upload text-2xl text-emerald-500"></i>
+                  <p class="text-sm font-medium text-slate-700" id="csvNameText">選取並上傳 CSV 檔案</p>
+                </div>
+              </div>
+              
+              <div id="csvPreviewArea" class="hidden space-y-2">
+                <p class="text-xs font-bold text-slate-700">📊 預覽待匯入資料 (<span id="csvCountText">0</span> 筆):</p>
+                <div class="max-h-36 overflow-y-auto border border-slate-100 rounded text-xs divide-y divide-slate-100 bg-slate-50">
+                  <table class="w-full text-left">
+                    <thead>
+                      <tr class="bg-slate-200/60 sticky top-0">
+                        <th class="p-1.5">名稱</th>
+                        <th class="p-1.5">分類</th>
+                        <th class="p-1.5">收藏位置</th>
+                      </tr>
+                    </thead>
+                    <tbody id="csvPreviewTableBody"></tbody>
+                  </table>
+                </div>
+                <button onclick="submitCSVImport()" class="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-semibold transition">
+                  一鍵確認寫入
+                </button>
+              </div>
+            </div>
+
+            <!-- 機制 2: 掃描檔/照片批次解析自動建檔 -->
+            <div class="bg-white p-6 rounded-xl border border-slate-200/80 shadow-sm space-y-4">
+              <div class="flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                  <div class="bg-indigo-100 text-indigo-600 p-2.5 rounded-lg">
+                    <i class="fa-solid fa-copy text-xl"></i>
+                  </div>
+                  <div>
+                    <h4 class="font-bold text-slate-800">2. 掃描檔／照片手動建檔</h4>
+                    <p class="text-xs text-slate-400">選取照片或 PDF，確認資料後上傳 SharePoint</p>
+                  </div>
+                </div>
+              </div>
+
+              <p class="text-sm text-slate-500">由檔名帶入名稱，分類與日期手動填寫。單檔上限 10 MB，一批附件總計 30 MB。</p>
+              <!-- 雙向檔案取得：選取 或 行動端直接拍照 (RWD) -->
+              <div class="grid grid-cols-2 gap-3">
+                <div class="relative border-2 border-dashed border-indigo-200 hover:border-indigo-500 rounded-lg p-4 text-center transition flex flex-col items-center justify-center cursor-pointer min-h-[120px]">
+                  <input type="file" id="scanFilesInput" multiple accept="image/*,application/pdf" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" onchange="handleScannedFiles(this, false)">
+                  <i class="fa-solid fa-images text-2xl text-indigo-500 mb-1"></i>
+                  <p class="text-xs font-semibold text-slate-700">選取照片或 PDF</p>
+                </div>
+
+                <div class="relative border-2 border-dashed border-purple-200 hover:border-purple-500 rounded-lg p-4 text-center transition flex flex-col items-center justify-center cursor-pointer min-h-[120px]">
+                  <input type="file" id="cameraFilesInput" capture="environment" accept="image/*" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" onchange="handleScannedFiles(this, true)">
+                  <i class="fa-solid fa-camera text-2xl text-purple-500 mb-1"></i>
+                  <p class="text-xs font-semibold text-slate-700">📷 拍照快速建檔</p>
+                </div>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- 掃描批次產生的前端編輯卡片區 (手動編輯) -->
+          <div id="batchDraftArea" class="hidden bg-slate-100/60 p-6 rounded-xl border border-slate-200/80 space-y-4">
+            <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+              <div>
+                <h4 class="font-bold text-slate-800 flex items-center gap-2">
+                  <span class="w-2.5 h-2.5 bg-indigo-600 rounded-full animate-pulse"></span>
+                  掃描暫存編輯區 (共 <span id="draftCount">0</span> 筆)
+                </h4>
+                <p class="text-xs text-slate-500">附件目前只在本頁暫存。請確認文件名稱、分類、日期與收藏位置，再按建檔上傳 SharePoint。</p>
+              </div>
+              
+              <!-- 按鈕操作區 (新增 取消重來 與 確認全部建檔 按鈕) -->
+              <div class="flex gap-2 w-full sm:w-auto">
+                <button onclick="triggerCancelBatchDrafts()" class="flex-1 sm:flex-initial px-5 py-2.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg text-sm font-bold shadow transition flex items-center justify-center gap-1.5">
+                  <i class="fa-solid fa-ban"></i> 取消重來
+                </button>
+                <button onclick="submitBatchDrafts()" class="flex-1 sm:flex-initial px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-bold shadow transition flex items-center justify-center gap-1.5">
+                  <i class="fa-solid fa-square-check"></i> 確認全部建檔
+                </button>
+              </div>
+            </div>
+
+            <!-- 卡片容器 -->
+            <div id="batchDraftContainer" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <!-- 動態生成草稿編輯卡片 -->
+            </div>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- ======================================= -->
+      <!-- Tab 3: 檔案分類統計 -->
+      <!-- ======================================= -->
+      <section id="statsTab" class="tab-content space-y-6 hidden">
+        <!-- 頂部數據看板 (KPI Cards) -->
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-6">
+          <div class="bg-white p-6 rounded-xl border border-slate-100 shadow-sm flex items-center gap-4">
+            <div class="p-4 bg-blue-100 text-blue-600 rounded-xl">
+              <i class="fa-solid fa-file-lines text-2xl"></i>
+            </div>
+            <div>
+              <p class="text-xs font-bold text-slate-400 uppercase tracking-wider">總文件數量</p>
+              <h3 id="statTotal" class="text-2xl font-extrabold text-slate-800 mt-0.5">0</h3>
+            </div>
+          </div>
+
+          <div class="bg-white p-6 rounded-xl border border-slate-100 shadow-sm flex items-center gap-4">
+            <div class="p-4 bg-orange-100 text-orange-600 rounded-xl">
+              <i class="fa-solid fa-calendar-day text-2xl"></i>
+            </div>
+            <div>
+              <p class="text-xs font-bold text-slate-400 uppercase tracking-wider">今日新增文件</p>
+              <h3 id="statToday" class="text-2xl font-extrabold text-slate-800 mt-0.5">0</h3>
+            </div>
+          </div>
+
+          <div class="bg-white p-6 rounded-xl border border-slate-100 shadow-sm flex items-center gap-4">
+            <div class="p-4 bg-emerald-100 text-emerald-600 rounded-xl">
+              <i class="fa-solid fa-tags text-2xl"></i>
+            </div>
+            <div>
+              <p class="text-xs font-bold text-slate-400 uppercase tracking-wider">現有分類總數</p>
+              <h3 id="statCategories" class="text-2xl font-extrabold text-slate-800 mt-0.5">0</h3>
+            </div>
+          </div>
+        </div>
+
+        <!-- 統計圖表 (Charts) -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div class="bg-white p-6 rounded-xl border border-slate-100 shadow-sm">
+            <h4 class="font-bold text-slate-800 mb-4 flex items-center gap-1.5">
+              <i class="fa-solid fa-chart-pie text-blue-500"></i> 分類比例分配 (圓環圖)
+            </h4>
+            <div class="h-80 flex items-center justify-center relative">
+              <canvas id="doughnutChart"></canvas>
+            </div>
+          </div>
+
+          <div class="bg-white p-6 rounded-xl border border-slate-100 shadow-sm">
+            <h4 class="font-bold text-slate-800 mb-4 flex items-center gap-1.5">
+              <i class="fa-solid fa-chart-bar text-blue-500"></i> 分類數量累積 (長條圖)
+            </h4>
+            <div class="h-80 relative">
+              <canvas id="barChart"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <!-- 點擊快篩提示區 -->
+        <div class="bg-blue-50 border border-blue-100 rounded-xl p-4 flex items-center gap-3">
+          <div class="text-blue-600 text-lg">
+            <i class="fa-solid fa-circle-info"></i>
+          </div>
+          <p class="text-xs text-blue-700 leading-relaxed font-medium">
+            <strong>互動小功能：</strong>在上述任何圖表中點擊各類別區塊或長條，系統會自動切換至【檔案搜尋與管理】分頁，並立即帶入該特定分類進行快篩，大幅縮減流程！
+          </p>
+        </div>
+      </section>
+
+      <!-- ======================================= -->
+      <!-- Tab 4: 個人分類與櫃位設定 -->
+      <!-- ======================================= -->
+      <section id="settingsTab" class="tab-content space-y-6 hidden">
+        <div class="max-w-2xl bg-white p-8 rounded-xl shadow-sm border border-slate-100 space-y-6">
+          <div class="flex items-center gap-3">
+            <div class="bg-indigo-100 text-indigo-600 p-2.5 rounded-lg animate-pulse">
+              <i class="fa-solid fa-sliders text-xl"></i>
+            </div>
+            <div>
+              <h3 class="text-lg font-bold text-slate-800">個人分類與櫃位預設</h3>
+              <p class="text-xs text-slate-400">此處是這個瀏覽器的個人預設，不會同步給其他同事；已儲存的文件分類與收藏位置仍在 SharePoint。</p>
+            </div>
+          </div>
+
+          <!-- 儲存櫃位表單 -->
+          <form id="settingsForm" onsubmit="handleSettingsSave(event)" class="space-y-4">
+            <div id="settingsFormContainer" class="grid grid-cols-1 gap-3 max-h-[350px] overflow-y-auto pr-1">
+              <!-- 這裡將由 JS 動態生成所有分類的櫃位輸入框與刪除鈕 -->
+            </div>
+            
+            <div class="flex justify-end pt-3 border-t border-slate-100">
+              <button type="submit" class="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-semibold text-sm transition shadow-md shadow-indigo-500/15 flex items-center gap-1.5">
+                <i class="fa-solid fa-floppy-disk"></i> 儲存櫃位變更
+              </button>
+            </div>
+          </form>
+
+          <!-- 新增自訂分類區 -->
+          <div class="bg-indigo-50/50 p-5 rounded-xl border border-indigo-100/50 space-y-4">
+            <h4 class="text-sm font-bold text-indigo-900 flex items-center gap-1.5">
+              <i class="fa-solid fa-plus-circle"></i> 新增自訂分類與預設櫃位
+            </h4>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label class="block text-xs font-bold text-slate-600 mb-1">新分類名稱</label>
+                <input type="text" id="newCategoryName" class="w-full px-3 py-2 rounded-lg border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" placeholder="例如：人事、行政、研發">
+              </div>
+              <div>
+                <label class="block text-xs font-bold text-slate-600 mb-1">初始預設櫃位</label>
+                <input type="text" id="newCategoryLocation" class="w-full px-3 py-2 rounded-lg border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" placeholder="例如：I1、J2">
+              </div>
+            </div>
+            <div class="flex justify-end">
+              <button type="button" onclick="addNewCategory()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold transition flex items-center gap-1">
+                <i class="fa-solid fa-plus"></i> 確認新增分類
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- 編輯文件 Modal 彈窗 -->
+  <div id="editModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center px-4 hidden">
+    <div class="bg-white rounded-2xl shadow-2xl p-6 max-w-lg w-full border border-slate-100 space-y-4">
+      <div class="flex justify-between items-center pb-3 border-b border-slate-100">
+        <h3 class="text-lg font-bold text-slate-800 flex items-center gap-2">
+          <i class="fa-solid fa-pen-to-square text-blue-600"></i> 編輯文件資料
+        </h3>
+        <button onclick="closeEditModal()" class="text-slate-400 hover:text-slate-600 text-lg">
+          <i class="fa-solid fa-times"></i>
+        </button>
+      </div>
+
+      <form id="editForm" onsubmit="handleEditSubmit(event)" class="space-y-4">
+        <input type="hidden" id="editDocId">
+        
+        <div>
+          <label class="block text-sm font-semibold text-slate-700 mb-1">文件名稱</label>
+          <input type="text" id="editDocName" required class="w-full px-4 py-2 rounded-lg border border-slate-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none">
+        </div>
+
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm font-semibold text-slate-700 mb-1">分類</label>
+            <!-- 這裡由 JS 全動態填充 options -->
+            <select id="editCategory" required class="w-full px-4 py-2 rounded-lg border border-slate-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none bg-white font-medium text-slate-700">
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm font-semibold text-slate-700 mb-1">檔案日期</label>
+            <input type="date" id="editFileDate" class="w-full px-4 py-2 rounded-lg border border-slate-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none">
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-sm font-semibold text-slate-700 mb-1">實體收藏位置</label>
+          <input type="text" id="editLocation" required class="w-full px-4 py-2 rounded-lg border border-slate-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none">
+        </div>
+
+        <div class="flex justify-end gap-3 pt-4 border-t border-slate-100">
+          <button type="button" onclick="closeEditModal()" class="px-4 py-2 border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 font-semibold text-sm transition">
+            取消
+          </button>
+          <button type="submit" class="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold text-sm transition">
+            儲存變更
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 自訂物理刪除確認 Modal 彈窗 (取代會被 iframe 封鎖的原生 confirm) -->
+  <div id="deleteConfirmModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center px-4 hidden">
+    <div class="bg-white rounded-2xl shadow-2xl p-6 max-w-md w-full border border-slate-100 space-y-4">
+      <div class="text-center">
+        <div class="inline-flex p-3 bg-rose-100 text-rose-600 rounded-full mb-3 text-2xl">
+          <i class="fa-solid fa-triangle-exclamation"></i>
+        </div>
+        <h3 class="text-lg font-bold text-slate-900">確認刪除文件記錄？</h3>
+        <p class="text-sm text-slate-500 mt-2 leading-relaxed">
+          您確定要將文件編號 <span id="deleteTargetIdDisplay" class="font-mono font-bold text-rose-600 bg-rose-50 px-1.5 py-0.5 rounded"></span> 從文件清單移除嗎？這會清空 Excel 內該筆資料，SharePoint 附件仍保留。需要復原時請由公司管理人員檢查版本紀錄。
+        </p>
+      </div>
+      <div class="flex gap-3 pt-2">
+        <button onclick="closeDeleteConfirmModal()" class="flex-1 py-2.5 border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 font-semibold text-sm transition">
+          取消
+        </button>
+        <button onclick="executeDeleteDocument()" class="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg font-semibold text-sm transition shadow-md shadow-rose-500/15">
+          確認刪除
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 自訂取消批次確認 Modal 彈窗 (完美防範 Iframe 阻擋問題) -->
+  <div id="cancelBatchConfirmModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center px-4 hidden">
+    <div class="bg-white rounded-2xl shadow-2xl p-6 max-w-md w-full border border-slate-100 space-y-4">
+      <div class="text-center">
+        <div class="inline-flex p-3 bg-amber-100 text-amber-600 rounded-full mb-3 text-2xl">
+          <i class="fa-solid fa-circle-question animate-bounce"></i>
+        </div>
+        <h3 class="text-lg font-bold text-slate-900">確定要取消並清空草稿嗎？</h3>
+        <p class="text-sm text-slate-500 mt-2 leading-relaxed">
+          此操作將會清空目前所有暫存的掃描卡片，未建檔的草稿將遺失。若先前儲存失敗，請另外檢查 SharePoint 是否留下未建檔附件。
+        </p>
+      </div>
+      <div class="flex gap-3 pt-2">
+        <button onclick="closeCancelBatchConfirmModal()" class="flex-1 py-2.5 border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 font-semibold text-sm transition">
+          返回繼續編輯
+        </button>
+        <button onclick="executeCancelBatchDrafts()" class="flex-1 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-semibold text-sm transition shadow-md shadow-amber-500/15">
+          確認清空
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 附件線上預覽 Lightbox Modal 彈窗 -->
+  <div id="previewModal" class="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden" onclick="closePreviewModal()">
+    <div class="bg-white rounded-2xl shadow-2xl p-5 max-w-3xl w-full max-h-[90vh] flex flex-col justify-between border border-slate-100 relative" onclick="event.stopPropagation()">
+      <!-- 右上角關閉按鈕 -->
+      <button onclick="closePreviewModal()" class="absolute -top-3 -right-3 w-8 h-8 flex items-center justify-center bg-slate-900 text-white rounded-full hover:bg-slate-700 transition shadow-lg">
+        <i class="fa-solid fa-times"></i>
+      </button>
+      
+      <!-- 標頭 -->
+      <div class="pb-3 border-b border-slate-100 flex justify-between items-center">
+        <h3 class="font-bold text-slate-800 text-base truncate pr-8" id="previewTitle">附件預覽</h3>
+        <span class="text-xs bg-indigo-50 text-indigo-600 px-2.5 py-0.5 rounded-full font-semibold">雲端快顯</span>
+      </div>
+      
+      <!-- 中間圖片/PDF呈現區 -->
+      <div class="flex-1 flex items-center justify-center overflow-auto py-4 bg-slate-50 rounded-xl my-4 min-h-[320px] max-h-[60vh]">
+        <img id="previewImage" class="max-w-full max-h-full object-contain hidden" alt="文件附件內容">
+        <iframe id="previewIframe" class="w-full h-[50vh] hidden" border="0"></iframe>
+        <div id="previewFallback" class="text-center p-6 hidden">
+          <i class="fa-solid fa-file-arrow-down text-5xl text-slate-300 mb-3 animate-bounce"></i>
+          <p class="text-slate-600 font-semibold mb-2">此格式不支援線上直接快顯</p>
+          <p class="text-xs text-slate-400">請點擊右下方按鈕，直接下載本附件進行閱讀。</p>
+        </div>
+      </div>
+      
+      <!-- 底部控制按鈕 -->
+      <div class="flex justify-between items-center pt-2">
+        <span class="text-xs text-slate-400 font-medium">提示：支援高解析度合約圖片與常用 PDF 線上預覽</span>
+        <div class="flex gap-2">
+          <button onclick="closePreviewModal()" class="px-4 py-2 border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 font-semibold text-sm transition">
+            關閉
+          </button>
+          <a id="previewDownloadBtn" href="#" download="" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold text-sm transition flex items-center gap-1.5 shadow-md shadow-blue-500/10">
+            <i class="fa-solid fa-download"></i> 下載附件檔
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Javascript 驅動邏輯 -->
+  <script src="vendor/msal-browser.min.js"></script>
+  <script src="config.js"></script>
+  <script src="m365-core.js"></script>
+  <script src="m365-app.js"></script>
+  <script src="ui.js"></script>
+</body>
+</html>
