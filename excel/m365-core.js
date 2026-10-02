@@ -93,7 +93,12 @@
         }
         if (!response.ok) {
           const detail=await response.json().catch(()=>({}));
-          const e=Error(messageFor(response.status,detail.error?.code)); e.status=response.status; e.code=detail.error?.code; e.uncertain=method !== 'GET' && response.status>=500; throw e;
+          const code=String(detail.error?.code||'unknown').replace(/[^a-zA-Z0-9_.-]/g,'').slice(0,80);
+          const stage=url.pathname.includes('/workbook/') ? 'Excel 表格操作' : url.pathname.includes('/lists/') ? 'SharePoint 清單存取' : '檔案／資料夾資訊存取';
+          const requestId=String(response.headers.get('request-id')||detail.error?.innerError?.['request-id']||'').replace(/[^a-zA-Z0-9-]/g,'').slice(0,80);
+          const guidance=response.status===403 ? (stage==='Excel 表格操作' ? '檔案資訊已讀取，但 Excel API 拒絕操作；需確認 Excel API 權限相容性及資源授權，尚不能判定原因。' : '請確認此應用程式對指定資源的授權及登入者權限；只有 Entra 管理員同意仍不足以存取 Selected 資源。') : messageFor(response.status,code);
+          const e=Error(`[診斷版 D1] ${stage}失敗（HTTP ${response.status} / ${code}）。${guidance}${requestId ? ' 查詢代碼：'+requestId : ''}`);
+          e.status=response.status; e.code=code; e.uncertain=method !== 'GET' && response.status>=500; throw e;
         }
         if (response.status === 204) return null;
         return response.json();
